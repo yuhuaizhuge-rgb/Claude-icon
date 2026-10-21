@@ -1,0 +1,59 @@
+name: Build iPhone app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check generated assets
+        run: python3 scripts/check_assets.py
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          xcodegen generate
+      - name: Compile unsigned iPhone archive
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild archive \
+            -project CrabApp.xcodeproj \
+            -scheme CrabApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/CrabApp.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO 2>&1 | tee build/xcodebuild.log
+      - name: Check widget and package IPA
+        run: |
+          set -euo pipefail
+          app="build/CrabApp.xcarchive/Products/Applications/CrabApp.app"
+          test -d "$app/PlugIns/CrabWidget.appex"
+          test -f "$app/PlugIns/CrabWidget.appex/XF0100.ttf"
+          test -f "$app/PlugIns/CrabWidget.appex/XF0118.ttf"
+          mkdir -p build/package/Payload
+          cp -R "$app" build/package/Payload/
+          cd build/package
+          zip -qr ../CrabApp.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CrabApp-unsigned-ipa
+          path: build/CrabApp.ipa
+          if-no-files-found: error
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
